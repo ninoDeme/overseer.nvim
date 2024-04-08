@@ -17,10 +17,12 @@ M.get_workspace_language = function()
 end
 
 ---@param dir string
+---@param limit number?
 ---@return nil|string
-local function find_tasks_file(dir)
+local function find_tasks_file(dir, limit)
   local vscode_dirs =
-    vim.fs.find(".vscode", { upward = true, type = "directory", path = dir, limit = math.huge })
+    vim.fs.find(".vscode", { upward = true, type = "directory", path = dir, limit = limit or math.huge })
+
   for _, vscode_dir in ipairs(vscode_dirs) do
     local tasks_file = files.join(vscode_dir, "tasks.json")
     if files.exists(tasks_file) then
@@ -29,12 +31,54 @@ local function find_tasks_file(dir)
   end
 end
 
----@param cwd string
 ---@param dir string
 ---@return nil|string
+local function find_workspace_file(dir)
+  local vscode_dirs = vim.fs.find(function(name, path)
+    return name:match(".*%.code%-workspace")
+  end, { upward = true, type = "file", path = dir, limit = math.huge })
+
+  return vscode_dirs[1]
+end
+
+---@param cwd string
+---@param dir string
+---@return nil|table
 M.get_tasks_file = function(cwd, dir)
+  local workspace_file = find_workspace_file(cwd)
+
+  if workspace_file then
+    local ret = {}
+    local defn = M.load_tasks_file(workspace_file)
+    local folders = {}
+    for _, v in ipairs(defn.folders) do
+      if type(v) == "string" then
+        table.insert(folders, v)
+      else
+        if v.path then
+          table.insert(folders, v.path)
+        end
+      end
+    end
+    for _, v in ipairs(folders) do
+      local tasks_file = files.join(cwd, v, ".vscode", "tasks.json")
+      if files.exists(tasks_file) then
+        table.insert(ret, tasks_file)
+      end
+    end
+    return ret
+  end
+  local ret = {}
   -- Look for the tasks file relative to the cwd and only then fall back to searching from the dir
-  return find_tasks_file(cwd) or find_tasks_file(dir)
+  local cwd_tasks = find_tasks_file(cwd)
+  if cwd_tasks then
+    table.insert(ret, cwd_tasks)
+  end
+  local dir_tasks = find_tasks_file(dir)
+  if dir_tasks then
+    table.insert(ret, dir_tasks)
+  end
+  return ret
 end
 
 ---@param tasks_file string
