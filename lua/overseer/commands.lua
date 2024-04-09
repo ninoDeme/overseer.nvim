@@ -318,21 +318,71 @@ M.run_template = function(opts, callback)
       elseif #templates == 1 or opts.first then
         handle_tmpl(templates[1])
       else
-        vim.ui.select(templates, {
-          prompt = "Task template:",
-          kind = "overseer_template",
-          format_item = function(tmpl)
-            if tmpl.desc then
-              return string.format("%s (%s)", tmpl.name, tmpl.desc)
-            else
-              return tmpl.name
-            end
+				local pickers = require("telescope.pickers")
+				local finders = require("telescope.finders")
+				local previewers = require("telescope.previewers")
+				local conf = require("telescope.config").values
+				local actions = require("telescope.actions")
+				local action_state = require("telescope.actions.state")
+
+				pickers.new({}, {
+					prompt_title = "Task Template",
+					layout_strategy = "bottom_pane",
+					finder = finders.new_table({
+						results = templates,
+            entry_maker = function(tmpl)
+              return {
+                value = tmpl,
+                display = tmpl.desc and string.format("%s (%s)", tmpl.name, tmpl.desc) or tmpl.name,
+                ordinal = tmpl.desc and string.format("%s (%s)", tmpl.name, tmpl.desc) or tmpl.name,
+              }
+            end,
+					}),
+					sorter = conf.generic_sorter(opts),
+					attach_mappings = function(prompt_bufnr, map)
+						actions.select_default:replace(function()
+							local picker = action_state.get_current_picker(prompt_bufnr)
+							actions.close(prompt_bufnr)
+
+							local selection = picker:get_multi_selection()
+
+							if not selection or #selection == 0 then
+								selection = {
+									action_state.get_selected_entry(),
+								}
+							end
+              for _, tmpl in ipairs(selection) do
+                handle_tmpl(tmpl.value)
+              end
+            end)
+            return true
           end,
-        }, function(tmpl)
-          if tmpl then
-            handle_tmpl(tmpl)
-          end
-        end)
+          previewer = previewers.new_buffer_previewer({
+            define_preview = function (self, entry, status)
+              vim.fn.deletebufline(self.state.bufnr, 1, '$')
+              local t={}
+              for str in string.gmatch(vim.inspect(entry.value), "([^\n]+)") do
+                table.insert(t, str)
+              end
+              vim.fn.setbufline(self.state.bufnr, 1, t)
+            end
+          })
+        }):find()
+        -- vim.ui.select(templates, {
+        --   prompt = "Task template:",
+        --   kind = "overseer_template",
+        --   format_item = function(tmpl)
+        --     if tmpl.desc then
+        --       return string.format("%s (%s)", tmpl.name, tmpl.desc)
+        --     else
+        --       return tmpl.name
+        --     end
+        --   end,
+        -- }, function(tmpl)
+        --   if tmpl then
+        --     handle_tmpl(tmpl)
+        --   end
+        -- end)
       end
     end)
   end
