@@ -86,7 +86,7 @@ OPTIONS                                                         *overseer-option
         -- String that separates tasks
         separator = "────────────────────────────────────────",
         -- Default direction. Can be "left", "right", or "bottom"
-        direction = "left",
+        direction = "bottom",
         -- Set keymap to false to remove default behavior
         -- You can add custom keymaps here as well (anything vim.keymap.set accepts)
         bindings = {
@@ -130,7 +130,7 @@ OPTIONS                                                         *overseer-option
         height = nil,
         -- Set any window options here (e.g. winhighlight)
         win_opts = {
-          winblend = 10,
+          winblend = 0,
         },
       },
       task_launcher = {
@@ -184,7 +184,7 @@ OPTIONS                                                         *overseer-option
         height = nil,
         -- Set any window options here (e.g. winhighlight)
         win_opts = {
-          winblend = 10,
+          winblend = 0,
         },
       },
       -- Configuration for task floating windows
@@ -194,7 +194,7 @@ OPTIONS                                                         *overseer-option
         border = "rounded",
         -- Set any window options here (e.g. winhighlight)
         win_opts = {
-          winblend = 10,
+          winblend = 0,
         },
       },
       -- Configuration for mapping help floating windows
@@ -210,13 +210,12 @@ OPTIONS                                                         *overseer-option
           "on_output_summarize",
           "on_exit_set_status",
           "on_complete_notify",
-          "on_complete_dispose",
+          { "on_complete_dispose", require_view = { "SUCCESS", "FAILURE" } },
         },
         -- Tasks from tasks.json use these components
         default_vscode = {
           "default",
           "on_result_diagnostics",
-          "on_result_diagnostics_quickfix",
         },
       },
       bundles = {
@@ -322,16 +321,16 @@ new_task({opts}): overseer.Task                                *overseer.new_tas
                        variables
           {strategy}   `nil|overseer.Serialized` Definition for a run Strategy
           {metadata}   `nil|table` Arbitrary metadata for your own use
-          {default_component_params} `nil|table` Default values for component
-                       params
+          {default_component_params} `nil|table<string, any>` Default values for
+                       component params
           {components} `nil|overseer.Serialized[]` List of components to attach.
                        Defaults to `{"default"}`
 
     Examples: >lua
       local task = overseer.new_task({
-        cmd = {'./build.sh'},
-        args = {'all'},
-        components = {{'on_output_quickfix', open=true}, 'default'}
+        cmd = { "./build.sh" },
+        args = { "all" },
+        components = { { "on_output_quickfix", open = true }, "default" }
       })
       task:start()
 <
@@ -340,16 +339,18 @@ toggle({opts})                                                   *overseer.toggl
     Open or close the task list
 
     Parameters:
-      {opts} `overseer.WindowOpts|nil`
-          {enter}     `boolean|nil` If false, stay in current window. Default
-                      true
-          {direction} `nil|"left"|"right"` Which direction to open the task list
+      {opts} `nil|overseer.WindowOpts`
+          {enter}         `nil|boolean`
+          {direction}     `nil|"left"|"right"|"bottom"`
+          {winid}         `nil|integer` Use this existing window instead of
+                          opening a new window
+          {focus_task_id} `nil|integer` After opening, focus this task
 
 open({opts})                                                       *overseer.open*
     Open the task list
 
     Parameters:
-      {opts} `overseer.WindowOpts|nil`
+      {opts} `nil|overseer.WindowOpts`
           {enter}     `boolean|nil` If false, stay in current window. Default
                       true
           {direction} `nil|"left"|"right"` Which direction to open the task list
@@ -395,8 +396,8 @@ list_tasks({opts}): overseer.Task[]                          *overseer.list_task
     List all tasks
 
     Parameters:
-      {opts} `overseer.ListTaskOpts|nil`
-          {unique}       `boolean|nil` Deduplicates non-running tasks by name
+      {opts} `nil|overseer.ListTaskOpts`
+          {unique}       `nil|boolean` Deduplicates non-running tasks by name
           {name}         `nil|string|string[]` Only list tasks with this name or
                          names
           {name_not}     `nil|boolean` Invert the name search (tasks *without*
@@ -506,6 +507,19 @@ wrap_template({base}, {override}, {default_params}): overseer.TemplateFileDefini
     Parameters:
       {base}           `overseer.TemplateFileDefinition` The base template
                        definition to wrap
+          {module}    `nil|string` The name of the module this was loaded from
+          {aliases}   `nil|string[]`
+          {desc}      `nil|string`
+          {tags}      `nil|string[]`
+          {params}    `nil|overseer.Params|fun(): overseer.Params`
+          {priority}  `nil|number`
+          {condition} `nil|overseer.SearchCondition`
+              {filetype} `nil|string|string[]`
+              {dir}      `nil|string|string[]`
+              {callback} `nil|fun(search: overseer.SearchParams): boolean` , nil
+                         |string
+          {builder}   `fun(params: table): overseer.TaskDefinition`
+          {hide}      `nil|boolean` Hide from the template list
       {override}       `nil|table<string, any>` Override any fields on the base
       {default_params} `nil|table<string, any>` Provide default values for any
                        parameters on the base
@@ -573,6 +587,8 @@ remove_template_hook({opts}, {hook})               *overseer.remove_template_hoo
 
     Parameters:
       {opts} `nil|overseer.HookOptions` Same as for add_template_hook
+          {module} `nil|string`
+          {name}   `nil|string`
       {hook} `fun(task_defn: overseer.TaskDefinition, util: overseer.TaskUtil)`
 
     Examples: >lua
@@ -591,6 +607,17 @@ register_template({defn})                             *overseer.register_templat
     Parameters:
       {defn} `overseer.TemplateDefinition|overseer.TemplateProvider`
 
+    Examples: >lua
+      overseer.register_template({
+        name = "My Task",
+        builder = function(params)
+          return {
+            cmd = { "echo", "Hello", "world" },
+          }
+        end,
+      })
+<
+
 load_template({name})                                     *overseer.load_template*
     Load a template definition from its module location
 
@@ -604,6 +631,23 @@ load_template({name})                                     *overseer.load_templat
 
 debug_parser()                                             *overseer.debug_parser*
     Open a tab with windows laid out for debugging a parser
+
+
+register_alias({name}, {components})                     *overseer.register_alias*
+    Register a new component alias.
+
+    Parameters:
+      {name}       `string`
+      {components} `overseer.Serialized[]`
+
+    Note:
+      This is intended to be used by plugin authors that wish to build on top of overseer. They do not
+      have control over the call to overseer.setup(), so this provides an alternative method of
+      setting a component alias that they can then use when creating tasks.
+
+    Examples: >lua
+      require("overseer").register_alias("my_plugin", { "default", "on_output_quickfix" })
+<
 
 --------------------------------------------------------------------------------
 COMPONENTS                                                   *overseer-components*
@@ -629,10 +673,12 @@ on_complete_dispose                                          *on_complete_dispos
     After task is completed, dispose it after a timeout
 
     Parameters:
-      {statuses} `list[enum]` Tasks with one of these statuses will be disposed
-                 (default `["SUCCESS", "FAILURE", "CANCELED"]`)
-      {timeout}  `number` Time to wait (in seconds) before disposing (default
-                 `300`)
+      {require_view} `list[enum]` Tasks with these statuses must be viewed
+                     before they will be disposed (default `[]`)
+      {statuses}     `list[enum]` Tasks with one of these statuses will be
+                     disposed (default `["SUCCESS", "FAILURE", "CANCELED"]`)
+      {timeout}      `number` Time to wait (in seconds) before disposing
+                     (default `300`)
 
 on_complete_notify                                            *on_complete_notify*
     vim.notify when task is completed
@@ -740,6 +786,14 @@ on_result_diagnostics_quickfix                    *on_result_diagnostics_quickfi
       {use_loclist} `boolean` If true, use the loclist instead of quickfix
                     (default `false`)
 
+on_result_diagnostics_trouble                      *on_result_diagnostics_trouble*
+    If task result contains diagnostics, open trouble.nvim
+
+    Parameters:
+      {args}  `list[string]` Arguments passed to 'Trouble diagnostics open'
+      {close} `boolean` If true, close Trouble when there are no diagnostics
+              (default `false`)
+
 on_result_notify                                                *on_result_notify*
     vim.notify when task receives results
     Normally you will want to use on_complete_notify. If you have a long-running
@@ -755,6 +809,27 @@ on_result_notify                                                *on_result_notif
                   infer_status_from_diagnostics = true
       {system}    `enum` When to send a system notification (default `"never"`)
                   (choices: `"always"|"never"|"unfocused"`)
+
+open_output                                                          *open_output*
+    Open task output
+
+    Parameters:
+      {direction}   `enum` Where to open the task output (default `"dock"`) The
+                    'dock' option will open the output docked to the bottom next
+                    to the task list. (choices:
+                    `"dock"|"float"|"tab"|"vertical"|"horizontal"`)
+      {focus}       `boolean` Focus the output window when it is opened (default
+                    `false`)
+      {on_complete} `enum` Open the output when the task completes (default
+                    `"never"`) (choices: `"always"|"never"|"success"|"failure"`)
+      {on_result}   `enum` Open the output when the task produces a result
+                    (default `"never"`) (choices:
+                    `"always"|"never"|"if_diagnostics"`)
+      {on_start}    `enum` Open the output when the task starts (default
+                    `"if_no_on_output_quickfix"`) The 'if_no_on_output_quickfix'
+                    option will open the task output on start unless the task
+                    has the 'on_output_quickfix' component attached. (choices:
+                    `"always"|"never"|"if_no_on_output_quickfix"`)
 
 restart_on_save                                                  *restart_on_save*
     Restart on any buffer :write
@@ -838,7 +913,7 @@ orchestrator({opts}): overseer.Strategy                    *strategy.orchestrato
             "make clean", -- Step 1: clean
             {             -- Step 2: build js and css in parallel
                "npm build",
-              { "shell", cmd = "lessc styles.less styles.css" },
+              { cmd = {"lessc", "styles.less", "styles.css"} },
             },
             "npm serve",  -- Step 3: serve
           },
@@ -858,7 +933,7 @@ toggleterm({opts}): overseer.Strategy                        *strategy.toggleter
     Run tasks using the toggleterm plugin
 
     Parameters:
-      {opts} `nil|table`
+      {opts} `nil|overseeer.ToggleTermStrategyOpts`
           {use_shell}     `nil|boolean` load user shell before running task
           {direction}     `nil|"vertical"|"horizontal"|"tab"|"float"`
           {highlights}    `nil|table` map to a highlight group name and a table
@@ -867,8 +942,8 @@ toggleterm({opts}): overseer.Strategy                        *strategy.toggleter
                           task output
           {close_on_exit} `nil|boolean` close the terminal and delete terminal
                           buffer (if open) after task exits
-          {quit_on_exit}  `"never"|"always"|"success"` close the terminal window
-                          (if open) after task exits
+          {quit_on_exit}  `nil|"never"|"always"|"success"` close the terminal
+                          window (if open) after task exits
           {open_on_start} `nil|boolean` toggle open the terminal automatically
                           when task starts
           {hidden}        `nil|boolean` cannot be toggled with normal ToggleTerm
@@ -1256,6 +1331,31 @@ The following types are available:
     }
 <
 
+Templates can define params to be a function, to dynamically generate the
+params.
+
+>lua
+    require("overseer").register_template({
+      name = "Git checkout",
+      params = function()
+        local stdout = vim.system({ "git", "branch", "--format=%(refname:short)" }):wait().stdout
+        local branches = vim.split(stdout, "\n", { trimempty = true })
+        return {
+          branch = {
+            desc = "Branch to checkout",
+            type = "enum",
+            choices = branches,
+          },
+        }
+      end,
+      builder = function(params)
+        return {
+          cmd = { "git", "checkout", params.branch },
+        }
+      end,
+    })
+<
+
 --------------------------------------------------------------------------------
 ACTIONS                                                         *overseer-actions*
 
@@ -1294,9 +1394,9 @@ setup():
       -- worth mapping it directly if you use it often.
       task_list = {
         bindings = {
-          ['P'] = '<CMD>OverseerQuickAction My custom action<CR>',
-        }
-      }
+          ["P"] = "<CMD>OverseerQuickAction My custom action<CR>",
+        },
+      },
     })
 <
 

@@ -47,7 +47,6 @@ end
 function JobstartStrategy:start(task)
   if not self.bufnr then
     self.bufnr = vim.api.nvim_create_buf(false, true)
-    vim.b[self.bufnr].overseer_task = task.id
     if self.opts.use_terminal then
       local mode = vim.api.nvim_get_mode().mode
       local term_id
@@ -169,7 +168,6 @@ function JobstartStrategy:start(task)
           { string.format("[Process exited %d]", c), "" }
         )
         vim.bo[self.bufnr].modifiable = false
-        vim.api.nvim_buf_set_option(self.bufnr, "modified", false)
       end
       self.job_id = nil
       -- If we're exiting vim, don't call the on_exit handler

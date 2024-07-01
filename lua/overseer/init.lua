@@ -254,8 +254,19 @@ end
 
 ---Add support for preLaunchTask/postDebugTask to nvim-dap
 ---@private
+---@deprecated
 ---@param enabled boolean
 M.patch_dap = function(enabled)
+  M.enable_dap(enabled)
+end
+
+---Add support for preLaunchTask/postDebugTask to nvim-dap
+---This is enabled by default when you call overseer.setup() unless you set `dap = false`
+---@param enabled? boolean
+M.enable_dap = function(enabled)
+  if enabled == nil then
+    enabled = true
+  end
   if not enabled and not package.loaded.dap then
     return
   end
@@ -263,26 +274,23 @@ M.patch_dap = function(enabled)
   if not ok then
     return
   end
-  if type(dap.run) == "table" then
-    if not enabled then
-      dap.run = dap.run.original
-    end
-    return
-  elseif not enabled then
+  if not dap.listeners.on_config then
+    local log = require("overseer.log")
+    log:warn("overseer requires a newer version of nvim-dap to enable DAP integration")
     return
   end
-  local daprun = dap.run
-  dap.run = setmetatable({
-    wrapper = nil,
-    original = daprun,
-  }, {
-    __call = function(self, config, opts)
-      if not self.wrapper then
-        self.wrapper = require("overseer.dap").wrap_run(daprun)
-      end
-      self.wrapper(config, opts)
-    end,
-  })
+  if enabled then
+    dap.listeners.on_config.overseer = require("overseer.dap").listener
+
+    -- If the user has not overridden the DAP json decoder, use ours since it supports JSON5
+    local vscode = require("dap.ext.vscode")
+    if vscode.json_decode == vim.json.decode then
+      vscode.json_decode = require("overseer.json").decode
+    end
+  else
+    dap.listeners.on_config.overseer = nil
+    dap.listeners.after.event_terminated.overseer = nil
+  end
 end
 
 ---Initialize overseer
@@ -297,7 +305,7 @@ M.setup = function(opts)
   end
   opts = opts or {}
   create_commands()
-  M.patch_dap(opts.dap ~= false)
+  M.enable_dap(opts.dap)
   pending_opts = opts
   if initialized then
     do_setup()
@@ -316,32 +324,21 @@ end
 
 ---Create a new Task
 ---@param opts overseer.TaskDefinition
----    cmd string|string[] Command to run. If it's a string it is run in the shell; a table is run directly
----    args nil|string[] Arguments to pass to the command
----    name nil|string Name of the task. Defaults to the cmd
----    cwd nil|string Working directory to run in
----    env nil|table<string, string> Additional environment variables
----    strategy nil|overseer.Serialized Definition for a run Strategy
----    metadata nil|table Arbitrary metadata for your own use
----    default_component_params nil|table Default values for component params
----    components nil|overseer.Serialized[] List of components to attach. Defaults to `{"default"}`
 ---@return overseer.Task
 ---@example
 --- local task = overseer.new_task({
----   cmd = {'./build.sh'},
----   args = {'all'},
----   components = {{'on_output_quickfix', open=true}, 'default'}
+---   cmd = { "./build.sh" },
+---   args = { "all" },
+---   components = { { "on_output_quickfix", open = true }, "default" }
 --- })
 --- task:start()
 M.new_task = lazy("task", "new")
 
 ---Open or close the task list
----@param opts overseer.WindowOpts|nil
----    enter boolean|nil If false, stay in current window. Default true
----    direction nil|"left"|"right" Which direction to open the task list
+---@param opts nil|overseer.WindowOpts
 M.toggle = lazy("window", "toggle")
 ---Open the task list
----@param opts overseer.WindowOpts|nil
+---@param opts nil|overseer.WindowOpts
 ---    enter boolean|nil If false, stay in current window. Default true
 ---    direction nil|"left"|"right" Which direction to open the task list
 M.open = lazy("window", "open")
@@ -369,28 +366,12 @@ M.save_task_bundle = lazy("task_bundle", "save_task_bundle")
 M.delete_task_bundle = lazy("task_bundle", "delete_task_bundle")
 
 ---List all tasks
----@param opts overseer.ListTaskOpts|nil
----    unique boolean|nil Deduplicates non-running tasks by name
----    name nil|string|string[] Only list tasks with this name or names
----    name_not nil|boolean Invert the name search (tasks *without* that name)
----    status nil|overseer.Status|overseer.Status[] Only list tasks with this status or statuses
----    status_not nil|boolean Invert the status search
----    recent_first nil|boolean The most recent tasks are first in the list
----    bundleable nil|boolean Only list tasks that should be included in a bundle
----    filter nil|fun(task: overseer.Task): boolean
+---@param opts nil|overseer.ListTaskOpts
 ---@return overseer.Task[]
 M.list_tasks = lazy("task_list", "list_tasks")
 
 ---Run a task from a template
 ---@param opts overseer.TemplateRunOpts
----    name nil|string The name of the template to run
----    tags nil|string[] List of tags used to filter when searching for template
----    autostart nil|boolean When true, start the task after creating it (default true)
----    first nil|boolean When true, take first result and never show the task picker. Default behavior will auto-set this based on presence of name and tags
----    prompt nil|"always"|"missing"|"allow"|"avoid"|"never" Controls when to prompt user for parameter input
----    params nil|table Parameters to pass to template
----    cwd nil|string Working directory for the task
----    env nil|table<string, string> Additional environment variables for the task
 ---@param callback nil|fun(task: overseer.Task|nil, err: string|nil)
 ---@note
 --- The prompt option will control when the user is presented a popup dialog to input template
@@ -481,11 +462,22 @@ M.run_action = lazy("action_util", "run_task_action")
 M.wrap_template = function(base, override, default_params)
   override = override or {}
   if default_params then
-    ---@diagnostic disable-next-line: undefined-field
-    override.params = vim.deepcopy(base.params or {})
-    for k, v in pairs(default_params) do
-      override.params[k].default = v
-      override.params[k].optional = true
+    local base_params = base.params
+    if type(base_params) == "function" then
+      override.params = function()
+        local params = base_params()
+        for k, v in pairs(default_params) do
+          params[k].default = v
+          params[k].optional = true
+        end
+        return params
+      end
+    else
+      override.params = vim.deepcopy(base_params or {})
+      for k, v in pairs(default_params) do
+        override.params[k].default = v
+        override.params[k].optional = true
+      end
     end
   end
   return setmetatable(override, { __index = base })
@@ -529,6 +521,15 @@ M.remove_template_hook = lazy_pend("template", "remove_hook_template")
 
 ---Directly register an overseer template
 ---@param defn overseer.TemplateDefinition|overseer.TemplateProvider
+---@example
+--- overseer.register_template({
+---   name = "My Task",
+---   builder = function(params)
+---     return {
+---       cmd = { "echo", "Hello", "world" },
+---     }
+---   end,
+--- })
 M.register_template = lazy_pend("template", "register")
 ---Load a template definition from its module location
 ---@param name string
@@ -539,6 +540,17 @@ M.load_template = lazy_pend("template", "load_template")
 
 ---Open a tab with windows laid out for debugging a parser
 M.debug_parser = lazy("parser.debug", "start_debug_session")
+
+---Register a new component alias.
+---@param name string
+---@param components overseer.Serialized[]
+---@note
+--- This is intended to be used by plugin authors that wish to build on top of overseer. They do not
+--- have control over the call to overseer.setup(), so this provides an alternative method of
+--- setting a component alias that they can then use when creating tasks.
+---@example
+--- require("overseer").register_alias("my_plugin", { "default", "on_output_quickfix" })
+M.register_alias = lazy("component", "alias")
 
 -- Used for vim-session integration.
 local timer_active = false

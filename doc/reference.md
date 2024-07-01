@@ -27,6 +27,7 @@
   - [register_template(defn)](#register_templatedefn)
   - [load_template(name)](#load_templatename)
   - [debug_parser()](#debug_parser)
+  - [register_alias(name, components)](#register_aliasname-components)
 - [Components](#components)
   - [dependencies](components.md#dependencies)
   - [display_duration](components.md#display_duration)
@@ -40,7 +41,9 @@
   - [on_output_write_file](components.md#on_output_write_file)
   - [on_result_diagnostics](components.md#on_result_diagnostics)
   - [on_result_diagnostics_quickfix](components.md#on_result_diagnostics_quickfix)
+  - [on_result_diagnostics_trouble](components.md#on_result_diagnostics_trouble)
   - [on_result_notify](components.md#on_result_notify)
+  - [open_output](components.md#open_output)
   - [restart_on_save](components.md#restart_on_save)
   - [run_after](components.md#run_after)
   - [timeout](components.md#timeout)
@@ -105,7 +108,7 @@ require("overseer").setup({
     -- String that separates tasks
     separator = "────────────────────────────────────────",
     -- Default direction. Can be "left", "right", or "bottom"
-    direction = "left",
+    direction = "bottom",
     -- Set keymap to false to remove default behavior
     -- You can add custom keymaps here as well (anything vim.keymap.set accepts)
     bindings = {
@@ -149,7 +152,7 @@ require("overseer").setup({
     height = nil,
     -- Set any window options here (e.g. winhighlight)
     win_opts = {
-      winblend = 10,
+      winblend = 0,
     },
   },
   task_launcher = {
@@ -203,7 +206,7 @@ require("overseer").setup({
     height = nil,
     -- Set any window options here (e.g. winhighlight)
     win_opts = {
-      winblend = 10,
+      winblend = 0,
     },
   },
   -- Configuration for task floating windows
@@ -213,7 +216,7 @@ require("overseer").setup({
     border = "rounded",
     -- Set any window options here (e.g. winhighlight)
     win_opts = {
-      winblend = 10,
+      winblend = 0,
     },
   },
   -- Configuration for mapping help floating windows
@@ -229,13 +232,12 @@ require("overseer").setup({
       "on_output_summarize",
       "on_exit_set_status",
       "on_complete_notify",
-      "on_complete_dispose",
+      { "on_complete_dispose", require_view = { "SUCCESS", "FAILURE" } },
     },
     -- Tasks from tasks.json use these components
     default_vscode = {
       "default",
       "on_result_diagnostics",
-      "on_result_diagnostics_quickfix",
     },
   },
   bundles = {
@@ -361,15 +363,15 @@ Create a new Task
 |       | env                       | `nil\|table<string, string>` | Additional environment variables                                                 |
 |       | strategy                  | `nil\|overseer.Serialized`   | Definition for a run Strategy                                                    |
 |       | metadata                  | `nil\|table`                 | Arbitrary metadata for your own use                                              |
-|       | default_component_params  | `nil\|table`                 | Default values for component params                                              |
+|       | default_component_params  | `nil\|table<string, any>`    | Default values for component params                                              |
 |       | components                | `nil\|overseer.Serialized[]` | List of components to attach. Defaults to `{"default"}`                          |
 
 **Examples:**
 ```lua
 local task = overseer.new_task({
-  cmd = {'./build.sh'},
-  args = {'all'},
-  components = {{'on_output_quickfix', open=true}, 'default'}
+  cmd = { "./build.sh" },
+  args = { "all" },
+  components = { { "on_output_quickfix", open = true }, "default" }
 })
 task:start()
 ```
@@ -379,11 +381,13 @@ task:start()
 `toggle(opts)` \
 Open or close the task list
 
-| Param | Type                       | Desc                   |                                                |
-| ----- | -------------------------- | ---------------------- | ---------------------------------------------- |
-| opts  | `overseer.WindowOpts\|nil` |                        |                                                |
-|       | enter                      | `boolean\|nil`         | If false, stay in current window. Default true |
-|       | direction                  | `nil\|"left"\|"right"` | Which direction to open the task list          |
+| Param | Type                       | Desc                             |                                                          |
+| ----- | -------------------------- | -------------------------------- | -------------------------------------------------------- |
+| opts  | `nil\|overseer.WindowOpts` |                                  |                                                          |
+|       | enter                      | `nil\|boolean`                   |                                                          |
+|       | direction                  | `nil\|"left"\|"right"\|"bottom"` |                                                          |
+|       | winid                      | `nil\|integer`                   | Use this existing window instead of opening a new window |
+|       | focus_task_id              | `nil\|integer`                   | After opening, focus this task                           |
 
 ### open(opts)
 
@@ -392,7 +396,7 @@ Open the task list
 
 | Param | Type                       | Desc                   |                                                |
 | ----- | -------------------------- | ---------------------- | ---------------------------------------------- |
-| opts  | `overseer.WindowOpts\|nil` |                        |                                                |
+| opts  | `nil\|overseer.WindowOpts` |                        |                                                |
 |       | enter                      | `boolean\|nil`         | If false, stay in current window. Default true |
 |       | direction                  | `nil\|"left"\|"right"` | Which direction to open the task list          |
 
@@ -454,8 +458,8 @@ List all tasks
 
 | Param | Type                         | Desc                                      |                                                     |
 | ----- | ---------------------------- | ----------------------------------------- | --------------------------------------------------- |
-| opts  | `overseer.ListTaskOpts\|nil` |                                           |                                                     |
-|       | unique                       | `boolean\|nil`                            | Deduplicates non-running tasks by name              |
+| opts  | `nil\|overseer.ListTaskOpts` |                                           |                                                     |
+|       | unique                       | `nil\|boolean`                            | Deduplicates non-running tasks by name              |
 |       | name                         | `nil\|string\|string[]`                   | Only list tasks with this name or names             |
 |       | name_not                     | `nil\|boolean`                            | Invert the name search (tasks *without* that name)  |
 |       | status                       | `nil\|overseer.Status\|overseer.Status[]` | Only list tasks with this status or statuses        |
@@ -571,11 +575,20 @@ Run an action on a task
 `wrap_template(base, override, default_params): overseer.TemplateFileDefinition` \
 Create a new template by overriding fields on another
 
-| Param          | Type                              | Desc                                                  |
-| -------------- | --------------------------------- | ----------------------------------------------------- |
-| base           | `overseer.TemplateFileDefinition` | The base template definition to wrap                  |
-| override       | `nil\|table<string, any>`         | Override any fields on the base                       |
-| default_params | `nil\|table<string, any>`         | Provide default values for any parameters on the base |
+| Param          | Type                              | Desc                                                  |                                             |
+| -------------- | --------------------------------- | ----------------------------------------------------- | ------------------------------------------- |
+| base           | `overseer.TemplateFileDefinition` | The base template definition to wrap                  |                                             |
+|                | module                            | `nil\|string`                                         | The name of the module this was loaded from |
+|                | aliases                           | `nil\|string[]`                                       |                                             |
+|                | desc                              | `nil\|string`                                         |                                             |
+|                | tags                              | `nil\|string[]`                                       |                                             |
+|                | params                            | `nil\|overseer.Params\|fun(): overseer.Params`        |                                             |
+|                | priority                          | `nil\|number`                                         |                                             |
+|                | condition                         | `nil\|overseer.SearchCondition`                       |                                             |
+|                | builder                           | `fun(params: table): overseer.TaskDefinition`         |                                             |
+|                | hide                              | `nil\|boolean`                                        | Hide from the template list                 |
+| override       | `nil\|table<string, any>`         | Override any fields on the base                       |                                             |
+| default_params | `nil\|table<string, any>`         | Provide default values for any parameters on the base |                                             |
 
 **Note:**
 <pre>
@@ -643,10 +656,12 @@ end)
 `remove_template_hook(opts, hook)` \
 Remove a hook that was added with add_template_hook
 
-| Param | Type                                                               | Desc                          |
-| ----- | ------------------------------------------------------------------ | ----------------------------- |
-| opts  | `nil\|overseer.HookOptions`                                        | Same as for add_template_hook |
-| hook  | `fun(task_defn: overseer.TaskDefinition, util: overseer.TaskUtil)` |                               |
+| Param | Type                                                               | Desc                          |     |
+| ----- | ------------------------------------------------------------------ | ----------------------------- | --- |
+| opts  | `nil\|overseer.HookOptions`                                        | Same as for add_template_hook |     |
+|       | module                                                             | `nil\|string`                 |     |
+|       | name                                                               | `nil\|string`                 |     |
+| hook  | `fun(task_defn: overseer.TaskDefinition, util: overseer.TaskUtil)` |                               |     |
 
 **Examples:**
 ```lua
@@ -667,6 +682,18 @@ Directly register an overseer template
 | Param | Type                                                     | Desc |
 | ----- | -------------------------------------------------------- | ---- |
 | defn  | `overseer.TemplateDefinition\|overseer.TemplateProvider` |      |
+
+**Examples:**
+```lua
+overseer.register_template({
+  name = "My Task",
+  builder = function(params)
+    return {
+      cmd = { "echo", "Hello", "world" },
+    }
+  end,
+})
+```
 
 ### load_template(name)
 
@@ -689,6 +716,28 @@ overseer.load_template('mytask')
 Open a tab with windows laid out for debugging a parser
 
 
+### register_alias(name, components)
+
+`register_alias(name, components)` \
+Register a new component alias.
+
+| Param      | Type                    | Desc |
+| ---------- | ----------------------- | ---- |
+| name       | `string`                |      |
+| components | `overseer.Serialized[]` |      |
+
+**Note:**
+<pre>
+This is intended to be used by plugin authors that wish to build on top of overseer. They do not
+have control over the call to overseer.setup(), so this provides an alternative method of
+setting a component alias that they can then use when creating tasks.
+</pre>
+
+**Examples:**
+```lua
+require("overseer").register_alias("my_plugin", { "default", "on_output_quickfix" })
+```
+
 
 <!-- /API -->
 
@@ -708,7 +757,9 @@ Open a tab with windows laid out for debugging a parser
 - [on_output_write_file](components.md#on_output_write_file)
 - [on_result_diagnostics](components.md#on_result_diagnostics)
 - [on_result_diagnostics_quickfix](components.md#on_result_diagnostics_quickfix)
+- [on_result_diagnostics_trouble](components.md#on_result_diagnostics_trouble)
 - [on_result_notify](components.md#on_result_notify)
+- [open_output](components.md#open_output)
 - [restart_on_save](components.md#restart_on_save)
 - [run_after](components.md#run_after)
 - [timeout](components.md#timeout)
@@ -808,4 +859,28 @@ The following types are available:
   -- and not templates (which usually prompt the user for their parameters)
   type = "opaque"
 }
+```
+
+Templates can define params to be a function, to dynamically generate the params.
+
+```lua
+require("overseer").register_template({
+  name = "Git checkout",
+  params = function()
+    local stdout = vim.system({ "git", "branch", "--format=%(refname:short)" }):wait().stdout
+    local branches = vim.split(stdout, "\n", { trimempty = true })
+    return {
+      branch = {
+        desc = "Branch to checkout",
+        type = "enum",
+        choices = branches,
+      },
+    }
+  end,
+  builder = function(params)
+    return {
+      cmd = { "git", "checkout", params.branch },
+    }
+  end,
+})
 ```

@@ -128,6 +128,56 @@ local function get_provider(type)
   end
 end
 
+---See https://code.visualstudio.com/docs/editor/tasks#_output-behavior
+---@param defn table
+---@return table[]
+local function get_presentation_components(defn)
+  local ret = {}
+  local presentation = defn.presentation
+  if not presentation then
+    return ret
+  end
+
+  -- VSCode defaults to "always", but Neovim has a different design philosophy (don't clutter the UI
+  -- with every little thing), so we are changing the default to "never".
+  local reveal = presentation.reveal or "never"
+  if reveal == "always" then
+    table.insert(ret, { "open_output", focus = defn.focus })
+  elseif reveal == "silent" then
+    table.insert(ret, {
+      "open_output",
+      focus = defn.focus,
+      on_start = "never",
+      on_complete = "failure",
+      on_result = "if_diagnostics",
+    })
+  end
+
+  local reveal_problems = presentation.revealProblems or "never"
+  -- Another departure from VSCode behavior: treat revealProblems="always" the same as "onProblem".
+  if reveal_problems == "always" or reveal_problems == "onProblem" then
+    local has_trouble = pcall(require, "trouble")
+    if has_trouble then
+      table.insert(ret, { "on_result_diagnostics_trouble" })
+    else
+      table.insert(ret, { "on_result_diagnostics_quickfix", open = true })
+    end
+  elseif defn.problemMatcher then
+    -- If there's no revealProblems but there is a problemMatcher, set the results in the quickfix
+    -- anyway (just don't auto open it)
+    table.insert(ret, "on_result_diagnostics_quickfix")
+  end
+
+  -- NOTE: we are not yet making use of:
+  -- - echo
+  -- - showReuseMessage
+  -- - panel
+  -- - clear
+  -- - close
+  -- - group
+  return ret
+end
+
 ---@param defn table
 ---@param precalculated_vars table
 local function get_task_builder(defn, precalculated_vars)
@@ -161,6 +211,7 @@ local function get_task_builder(defn, precalculated_vars)
     if defn.isBackground then
       table.insert(components, "on_complete_restart")
     end
+    vim.list_extend(components, get_presentation_components(defn))
 
     if defn.path then
       opts.cwd = files.join(precalculated_vars.workspaceFolder, defn.path, opts.cwd or "")
@@ -254,7 +305,6 @@ local function convert_vscode_task(defn, precalculated_vars)
     tmpl.hide = true
   end
 
-  -- NOTE: we ignore defn.presentation
   -- NOTE: we intentionally do nothing with defn.runOptions.
   -- runOptions.reevaluateOnRun unfortunately doesn't mesh with how we re-run tasks
   -- runOptions.runOn allows tasks to auto-run, which I philosophically oppose

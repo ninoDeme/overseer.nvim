@@ -1,6 +1,8 @@
 local component = require("overseer.component")
+local config = require("overseer.config")
 local constants = require("overseer.constants")
 local form_utils = require("overseer.form.utils")
+local layout = require("overseer.layout")
 local log = require("overseer.log")
 local shell = require("overseer.shell")
 local strategy = require("overseer.strategy")
@@ -18,13 +20,13 @@ local STATUS = constants.STATUS
 ---@field cmd string|string[]
 ---@field cwd string
 ---@field env? table<string, string>
----@field strategy_defn? string|table
----@field strategy? overseer.Strategy
+---@field strategy_defn string|table
+---@field strategy overseer.Strategy
 ---@field name string
----@field private bufnr? number
 ---@field exit_code? number
 ---@field components overseer.Component[]
 ---@field parent_id? integer ID of parent task. Used only to visually group tasks in the task list
+---@field private prev_bufnr? integer
 ---@field private _subscribers table<string, function[]>
 local Task = {}
 
@@ -42,15 +44,15 @@ Task.params = {
 }
 
 ---@class (exact) overseer.TaskDefinition
----@field cmd string|string[]
----@field args? string[]
----@field name? string
----@field cwd? string
----@field env? table<string, string>
----@field strategy? overseer.Serialized
----@field metadata? table
+---@field cmd string|string[] Command to run. If it's a string it is run in the shell; a table is run directly
+---@field args? string[] Arguments to pass to the command
+---@field name? string Name of the task. Defaults to the cmd
+---@field cwd? string Working directory to run in
+---@field env? table<string, string> Additional environment variables
+---@field strategy? overseer.Serialized Definition for a run Strategy
+---@field metadata? table Arbitrary metadata for your own use
 ---@field default_component_params? table<string, any> Default values for component params
----@field components? overseer.Serialized[]
+---@field components? overseer.Serialized[] List of components to attach. Defaults to `{"default"}`
 
 ---Create an uninitialized Task with no ID that will not be run
 ---This is used by the Task previewer (loading task bundles) so that we can use
@@ -98,6 +100,11 @@ function Task.new_uninitialized(opts)
     end
   end
   name = name:gsub("\n", " ")
+
+  if not opts.strategy then
+    opts.strategy = config.strategy
+  end
+
   -- Build the instance data for the task
   local data = {
     result = nil,
@@ -113,10 +120,12 @@ function Task.new_uninitialized(opts)
     strategy_defn = opts.strategy,
     strategy = strategy.load(opts.strategy),
     name = name,
-    bufnr = nil,
     exit_code = nil,
     prev_bufnr = nil,
     components = {},
+    -- for internal use
+    ---@diagnostic disable-next-line: undefined-field
+    parent_id = opts.parent_id,
   }
   local task = setmetatable(data, { __index = Task })
   task:add_components(opts.components)
@@ -131,6 +140,10 @@ function Task.new(opts)
   task.id = next_id
   next_id = next_id + 1
   task:dispatch("on_init")
+  local bufnr = task:get_bufnr()
+  if bufnr then
+    vim.b[bufnr].overseer_task = task.id
+  end
   return task
 end
 
@@ -410,7 +423,64 @@ end
 
 ---@return number|nil
 function Task:get_bufnr()
-  return self.strategy:get_bufnr()
+  local bufnr = self.strategy:get_bufnr()
+  if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
+    return bufnr
+  end
+end
+
+---@param direction? "float"|"tab"|"vertical"|"horizontal"
+function Task:open_output(direction)
+  local bufnr = self:get_bufnr()
+  if not bufnr then
+    return
+  end
+
+  -- Toggleterm itself needs to handle these operations.
+  -- TODO: maybe we should build a formal abstraction that handles this, instead of relying on a
+  -- gross if statement here.
+  if self.strategy.name == "toggleterm" and direction then
+    ---@diagnostic disable-next-line: undefined-field
+    local term = self.strategy.term
+    if not term then
+      return
+    end
+    term:open(nil, direction)
+    return
+  end
+
+  if direction == "float" then
+    local winid = layout.open_fullscreen_float(bufnr)
+    util.scroll_to_end(winid)
+  elseif direction == "tab" then
+    vim.cmd.tabnew()
+    util.set_term_window_opts()
+    vim.api.nvim_win_set_buf(0, bufnr)
+    util.scroll_to_end(0)
+  elseif direction == "vertical" then
+    vim.cmd.vsplit()
+    util.set_term_window_opts()
+    vim.api.nvim_win_set_buf(0, bufnr)
+    util.scroll_to_end(0)
+  elseif direction == "horizontal" then
+    -- If we're currently in the task list, open a split in the nearest other window
+    if vim.bo.filetype == "OverseerList" then
+      for _, winid in ipairs(util.get_fixed_wins()) do
+        if not vim.wo[winid].winfixwidth then
+          util.go_win_no_au(winid)
+          break
+        end
+      end
+    end
+    vim.cmd.split()
+    util.set_term_window_opts()
+    vim.api.nvim_win_set_buf(0, bufnr)
+    util.scroll_to_end(0)
+  else
+    vim.cmd.normal({ args = { "m'" }, bang = true })
+    vim.api.nvim_win_set_buf(0, bufnr)
+    util.scroll_to_end(0)
+  end
 end
 
 function Task:reset()
@@ -525,6 +595,7 @@ end
 
 ---Cleans up resources, removes from task list, and deletes buffer.
 ---@param force? boolean When true, will dispose even with a nonzero refcount or when buffer is visible
+---@return boolean disposed
 function Task:dispose(force)
   vim.validate({
     force = { force, "b", true },
@@ -536,7 +607,7 @@ function Task:dispose(force)
     log:debug("Not disposing task %s: has %d references", self.name, self._references)
     return false
   end
-  local bufnr = self.strategy:get_bufnr()
+  local bufnr = self:get_bufnr()
   local bufnr_visible = util.is_bufnr_visible(bufnr)
   if not force then
     -- Can't dispose if the strategy bufnr is open
@@ -563,7 +634,7 @@ function Task:dispose(force)
   task_list.remove(self)
   if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
     if bufnr_visible then
-      vim.api.nvim_buf_set_option(bufnr, "bufhidden", "wipe")
+      vim.bo[bufnr].bufhidden = "wipe"
     else
       vim.api.nvim_buf_delete(bufnr, { force = true })
     end
@@ -636,7 +707,8 @@ function Task:start()
   self:dispatch("on_start")
   local bufnr = self.strategy:get_bufnr()
   if bufnr then
-    vim.api.nvim_buf_set_option(bufnr, "buflisted", false)
+    vim.bo[bufnr].buflisted = false
+    vim.b[bufnr].overseer_task = self.id
   end
 
   util.replace_buffer_in_wins(self.prev_bufnr, bufnr)

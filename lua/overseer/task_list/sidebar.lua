@@ -1,3 +1,4 @@
+local TaskView = require("overseer.task_view")
 local action_util = require("overseer.action_util")
 local binding_util = require("overseer.binding_util")
 local bindings = require("overseer.task_list.bindings")
@@ -8,6 +9,13 @@ local util = require("overseer.util")
 
 local M = {}
 
+---@class overseer.Sidebar
+---@field bufnr integer
+---@field default_detail integer
+---@field private task_lines {[1]: integer, [2]: overseer.Task}[]
+---@field private task_detail table<integer, integer>
+---@field private preview? overseer.TaskView
+---@field private focused_task_id? integer
 local Sidebar = {}
 
 local ref
@@ -18,6 +26,7 @@ M.get_or_create = function()
   if not sb then
     ref = Sidebar.new()
     sb = ref
+    sb:render(task_list.list_tasks())
   end
   return sb, created
 end
@@ -35,40 +44,54 @@ function Sidebar.new()
   local bufnr = vim.api.nvim_create_buf(false, true)
 
   -- Set buffer options
-  vim.api.nvim_buf_set_option(bufnr, "buftype", "nofile")
-  vim.api.nvim_buf_set_option(bufnr, "bufhidden", "hide")
-  vim.api.nvim_buf_set_option(bufnr, "buflisted", false)
-  vim.api.nvim_buf_set_option(bufnr, "swapfile", false)
-  vim.api.nvim_buf_set_option(bufnr, "modifiable", false)
+  vim.bo[bufnr].buftype = "nofile"
+  vim.bo[bufnr].bufhidden = "hide"
+  vim.bo[bufnr].buflisted = false
+  vim.bo[bufnr].swapfile = false
+  vim.bo[bufnr].modifiable = false
 
-  local tl = setmetatable({
+  local self = setmetatable({
     bufnr = bufnr,
     default_detail = config.task_list.default_detail,
     task_detail = {},
     task_lines = {},
+    preview = nil,
   }, { __index = Sidebar })
+  self:init()
+  return self
+end
 
+---@private
+function Sidebar:init()
   vim.api.nvim_create_autocmd({ "BufHidden", "WinLeave" }, {
     desc = "Close preview window when task list closes",
-    buffer = bufnr,
+    buffer = self.bufnr,
     command = "pclose",
   })
   vim.api.nvim_create_autocmd("CursorMoved", {
     desc = "Update preview window when cursor moves",
-    buffer = bufnr,
+    buffer = self.bufnr,
+    nested = true,
     callback = function()
-      tl:update_preview()
+      local task = self:get_task_from_line()
+      self:set_task_focused(task and task.id)
+    end,
+  })
+  vim.api.nvim_create_autocmd("User", {
+    pattern = "OverseerListUpdate",
+    desc = "Update overseer task list when tasks change",
+    callback = function()
+      self:render(task_list.list_tasks())
     end,
   })
 
-  binding_util.create_plug_bindings(bufnr, bindings, tl)
-  binding_util.create_bindings_to_plug(bufnr, "n", config.task_list.bindings, "OverseerTask:")
-
-  return tl
+  binding_util.create_plug_bindings(self.bufnr, bindings, self)
+  binding_util.create_bindings_to_plug(self.bufnr, "n", config.task_list.bindings, "OverseerTask:")
 end
 
+---@private
 ---@return nil|integer
-function Sidebar:_get_winid()
+function Sidebar:get_winid()
   if vim.api.nvim_get_current_buf() == self.bufnr then
     return vim.api.nvim_get_current_win()
   end
@@ -84,10 +107,28 @@ function Sidebar:_get_winid()
   end
 end
 
+---@private
+---@param task_id? integer
+function Sidebar:set_task_focused(task_id)
+  if task_id == self.focused_task_id then
+    return
+  end
+  vim.api.nvim_exec_autocmds("User", {
+    pattern = "OverseerListTaskHover",
+    modeline = false,
+    data = {
+      task_id = task_id,
+    },
+  })
+  self.focused_task_id = task_id
+  self:highlight_focused()
+end
+
+---@private
 ---@return nil|overseer.Task
-function Sidebar:_get_task_from_line(lnum)
+function Sidebar:get_task_from_line(lnum)
   if not lnum then
-    local winid = self:_get_winid()
+    local winid = self:get_winid()
     if not winid then
       return nil
     end
@@ -95,9 +136,28 @@ function Sidebar:_get_task_from_line(lnum)
   end
 
   for _, v in ipairs(self.task_lines) do
-    if v[1] >= lnum then
-      return v[2]
+    local end_lnum, task = v[1], v[2]
+    if end_lnum >= lnum then
+      return task
     end
+  end
+end
+
+---@param task_id integer
+function Sidebar:focus_task_id(task_id)
+  local winid = self:get_winid()
+  if not winid then
+    return
+  end
+  local start_lnum = 1
+  for _, v in ipairs(self.task_lines) do
+    local end_lnum, task = v[1], v[2]
+    if task.id == task_id then
+      vim.api.nvim_win_set_cursor(winid, { start_lnum, 0 })
+      self:set_task_focused(task_id)
+      return
+    end
+    start_lnum = end_lnum + 2
   end
 end
 
@@ -130,14 +190,8 @@ local function detect_direction(bufnr, winlayout)
 end
 
 function Sidebar:toggle_preview()
-  local pwin = util.get_preview_window()
-  if pwin then
-    vim.cmd.pclose()
-    return
-  end
-  local task = self:_get_task_from_line()
-  local task_bufnr = task and task:get_bufnr()
-  if not task or not task_bufnr or not vim.api.nvim_buf_is_valid(task_bufnr) then
+  if self.preview and not self.preview:is_disposed() then
+    self.preview:dispose()
     return
   end
 
@@ -153,7 +207,7 @@ function Sidebar:toggle_preview()
     height = layout.get_editor_height() - vim.api.nvim_win_get_height(0) - 1 - 2 * padding
   end
   local col = (direction == "left" and (win_width + padding) or padding)
-  local winid = vim.api.nvim_open_win(task_bufnr, false, {
+  local winid = vim.api.nvim_open_win(0, false, {
     relative = "editor",
     border = config.task_win.border,
     row = 1,
@@ -163,17 +217,27 @@ function Sidebar:toggle_preview()
     style = "minimal",
     noautocmd = true,
   })
-  vim.api.nvim_set_option_value("previewwindow", true, { scope = "local", win = winid })
   for k, v in pairs(config.task_win.win_opts) do
     vim.api.nvim_set_option_value(k, v, { scope = "local", win = winid })
   end
-  if winid then
-    util.scroll_to_end(winid)
-  end
+  self.preview = TaskView.new(winid, {
+    close_on_list_close = true,
+    select = function(_, tasks, task_under_cursor)
+      return task_under_cursor or tasks[1]
+    end,
+  })
+  vim.api.nvim_create_autocmd("WinLeave", {
+    desc = "Close task preview when leaving overseer list",
+    once = true,
+    callback = function()
+      self.preview:dispose()
+    end,
+  })
+  util.scroll_to_end(winid)
 end
 
 function Sidebar:change_task_detail(delta)
-  local task = self:_get_task_from_line()
+  local task = self:get_task_from_line()
   if not task then
     return
   end
@@ -192,8 +256,9 @@ function Sidebar:change_default_detail(delta)
   task_list.update()
 end
 
+---@private
 ---@return integer[]
-function Sidebar:_get_output_wins()
+function Sidebar:get_output_wins()
   local ret = {}
   for _, winid in ipairs(util.buf_list_wins(self.bufnr)) do
     local output_win = vim.w[winid].overseer_output_win
@@ -204,46 +269,30 @@ function Sidebar:_get_output_wins()
   return ret
 end
 
----@return integer[]
-function Sidebar:_get_preview_wins()
-  local ret = {}
-  local preview_win = util.get_preview_window()
-  if preview_win then
-    table.insert(ret, preview_win)
-  end
-  for _, winid in ipairs(self:_get_output_wins()) do
-    table.insert(ret, winid)
-  end
-  return ret
-end
-
-function Sidebar:update_preview()
-  local winids = self:_get_preview_wins()
-  if vim.tbl_isempty(winids) then
+---@private
+function Sidebar:highlight_focused()
+  local ns = vim.api.nvim_create_namespace("overseer_focus")
+  vim.api.nvim_buf_clear_namespace(self.bufnr, ns, 0, -1)
+  if not self.focused_task_id then
     return
   end
-  local task = self:_get_task_from_line()
-  local display_buf = task and task:get_bufnr()
-  if not display_buf or not vim.api.nvim_buf_is_valid(display_buf) then
-    display_buf = vim.api.nvim_create_buf(false, true)
-    vim.bo[display_buf].bufhidden = "wipe"
-    vim.b[display_buf].overseer_task = -1
-    vim.api.nvim_buf_set_lines(display_buf, 0, -1, true, { "--no task buffer--" })
-    if task then
-      -- The task hasn't started yet and doesn't have a buffer.
-      -- Add a callback to retry once the task does start
-      task:subscribe("on_start", function()
-        self:update_preview()
-        return false
-      end)
-    end
-  end
 
-  for _, winid in ipairs(winids) do
-    if vim.api.nvim_win_get_buf(winid) ~= display_buf then
-      vim.api.nvim_win_set_buf(winid, display_buf)
-      util.scroll_to_end(winid)
+  local start_lnum = 1
+  for _, v in ipairs(self.task_lines) do
+    local end_lnum, task = v[1], v[2]
+    if task.id == self.focused_task_id then
+      if vim.fn.has("nvim-0.10") == 1 then
+        vim.api.nvim_buf_set_extmark(self.bufnr, ns, start_lnum - 1, 0, {
+          line_hl_group = "CursorLine",
+          end_row = end_lnum - 1,
+        })
+      else
+        for i = start_lnum, end_lnum do
+          vim.api.nvim_buf_add_highlight(self.bufnr, ns, "CursorLine", i - 1, 0, -1)
+        end
+      end
     end
+    start_lnum = end_lnum + 2
   end
 end
 
@@ -252,8 +301,9 @@ function Sidebar:jump(direction)
   local prev = 1
   local cur = 1
   for _, v in ipairs(self.task_lines) do
-    local next = v[1] + 2
-    if v[1] >= lnum then
+    local end_lnum = v[1]
+    local next = end_lnum + 2
+    if end_lnum >= lnum then
       if direction < 0 then
         vim.api.nvim_win_set_cursor(0, { prev, 0 })
       else
@@ -268,19 +318,26 @@ end
 
 ---@param direction integer -1 for up, 1 for down
 function Sidebar:scroll_output(direction)
-  local wins = self:_get_preview_wins()
-  for _, winid in ipairs(wins) do
-    vim.api.nvim_win_call(winid, function()
-      local key =
-        vim.api.nvim_replace_termcodes(direction < 0 and "<C-u>" or "<C-d>", true, true, true)
-      vim.cmd.normal({ args = { key }, bang = true })
-    end)
+  if not self.focused_task_id then
+    return
+  end
+  for _, winid in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if vim.api.nvim_win_is_valid(winid) then
+      local bufnr = vim.api.nvim_win_get_buf(winid)
+      if vim.b[bufnr].overseer_task == self.focused_task_id then
+        vim.api.nvim_win_call(winid, function()
+          local key =
+            vim.api.nvim_replace_termcodes(direction < 0 and "<C-u>" or "<C-d>", true, true, true)
+          vim.cmd.normal({ args = { key }, bang = true })
+        end)
+      end
+    end
   end
 end
 
 function Sidebar:run_action(name)
   vim.validate({ name = { name, "s", true } })
-  local task = self:_get_task_from_line()
+  local task = self:get_task_from_line()
   if not task then
     return
   end
@@ -292,9 +349,9 @@ function Sidebar:render(tasks)
   if not vim.api.nvim_buf_is_valid(self.bufnr) then
     return false
   end
-  local prev_first_task = self:_get_task_from_line(1)
+  local prev_num_lines = vim.api.nvim_buf_line_count(self.bufnr)
+  local prev_first_task = self:get_task_from_line(1)
   local prev_first_task_id = prev_first_task and prev_first_task.id
-  local new_first_task_id = not vim.tbl_isempty(tasks) and tasks[#tasks].id
   local ns = vim.api.nvim_create_namespace("overseer")
   vim.api.nvim_buf_clear_namespace(self.bufnr, ns, 0, -1)
 
@@ -337,36 +394,46 @@ function Sidebar:render(tasks)
       table.insert(highlights, { "OverseerTaskBorder", #lines, 0, -1 })
     end
   end
-  local sidebar_winid = self:_get_winid()
+  local sidebar_winid = self:get_winid()
   local view
   if sidebar_winid then
     vim.api.nvim_win_call(sidebar_winid, function()
       view = vim.fn.winsaveview()
     end)
   end
-  vim.api.nvim_buf_set_option(self.bufnr, "modifiable", true)
+  vim.bo[self.bufnr].modifiable = true
   vim.api.nvim_buf_set_lines(self.bufnr, 0, -1, true, lines)
-  vim.api.nvim_buf_set_option(self.bufnr, "modifiable", false)
-  vim.api.nvim_buf_set_option(self.bufnr, "modified", false)
+  vim.bo[self.bufnr].modifiable = false
+  vim.bo[self.bufnr].modified = false
   util.add_highlights(self.bufnr, ns, highlights)
 
-  if prev_first_task_id ~= new_first_task_id then
-    local output_wins = self:_get_output_wins()
-    local has_output_wins = not vim.tbl_isempty(output_wins)
-    local in_sidebar = vim.api.nvim_get_current_buf() == self.bufnr
-    local in_output_win = vim.tbl_contains(output_wins, vim.api.nvim_get_current_win())
-    if has_output_wins and not in_sidebar and not in_output_win then
-      for _, winid in ipairs(util.buf_list_wins(self.bufnr)) do
-        vim.api.nvim_win_set_cursor(winid, { 1, 0 })
-      end
-      self:update_preview()
+  if sidebar_winid then
+    if view then
+      vim.api.nvim_win_call(sidebar_winid, function()
+        vim.fn.winrestview(view)
+      end)
+    end
+
+    local new_first_task = tasks[#tasks]
+    local new_first_task_id = new_first_task and new_first_task.id
+    local new_line_count = vim.api.nvim_buf_line_count(self.bufnr)
+
+    local in_sidebar = vim.api.nvim_get_current_win() == sidebar_winid
+    local in_output_win = vim.b.overseer_task ~= nil
+    if
+      not in_sidebar
+      and not in_output_win
+      and prev_first_task_id ~= new_first_task_id
+      and new_first_task_id
+    then
+      self:focus_task_id(new_first_task_id)
+    elseif prev_num_lines ~= new_line_count then
+      -- Make sure our cursor stays on the previously focused task, even if it's moved
+      self:focus_task_id(self.focused_task_id)
     end
   end
-  if sidebar_winid and view then
-    vim.api.nvim_win_call(sidebar_winid, function()
-      vim.fn.winrestview(view)
-    end)
-  end
+
+  self:highlight_focused()
 
   return true
 end

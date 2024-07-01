@@ -243,8 +243,8 @@ end
 ---@field first? boolean When true, take first result and never show the task picker. Default behavior will auto-set this based on presence of name and tags
 ---@field prompt? "always"|"missing"|"allow"|"avoid"|"never" Controls when to prompt user for parameter input
 ---@field params? table Parameters to pass to template
----@field cwd? string
----@field env? table<string, string>
+---@field cwd? string Working directory for the task
+---@field env? table<string, string> Additional environment variables for the task
 
 ---@param opts overseer.TemplateRunOpts
 ---@param callback? fun(task: overseer.Task|nil, err: string|nil)
@@ -380,14 +380,18 @@ M.task_action = function()
     return
   end
 
-  vim.ui.select(tasks, {
+  local task_summaries = vim.tbl_map(function(task)
+    return { name = task.name, id = task.id }
+  end, tasks)
+  vim.ui.select(task_summaries, {
     prompt = "Select task",
     kind = "overseer_task",
     format_item = function(task)
       return task.name
     end,
-  }, function(task)
-    if task then
+  }, function(task_summary)
+    if task_summary then
+      local task = assert(task_list.get(task_summary.id))
       action_util.run_task_action(task)
     end
   end)

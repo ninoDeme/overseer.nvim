@@ -78,12 +78,8 @@ local function create_cursormoved_tail_autocmd()
       local lnum = vim.api.nvim_win_get_cursor(0)[1]
       local linecount = vim.api.nvim_buf_line_count(0)
       if lnum == linecount then
-        -- TODO remove after https://github.com/folke/neodev.nvim/pull/163 lands
-        ---@diagnostic disable-next-line: inject-field
         vim.w.overseer_pause_tail_for_buf = nil
       else
-        -- TODO remove after https://github.com/folke/neodev.nvim/pull/163 lands
-        ---@diagnostic disable-next-line: inject-field
         vim.w.overseer_pause_tail_for_buf = args.buf
       end
     end,
@@ -496,7 +492,7 @@ M.get_hl_foreground = function(group)
   if vim.fn.has("nvim-0.9") == 1 then
     return vim.api.nvim_get_hl(0, { name = group }).fg
   else
-    ---@diagnostic disable-next-line: undefined-field
+    ---@diagnostic disable-next-line: undefined-field, deprecated
     local ok, data = pcall(vim.api.nvim_get_hl_by_name, group, true)
     if ok then
       return data.foreground
@@ -607,6 +603,8 @@ M.format_duration = function(duration)
   return time
 end
 
+---@param name_or_config string|table
+---@param cb fun(task: nil|overseer.Task)
 M.run_template_or_task = function(name_or_config, cb)
   if type(name_or_config) == "table" and name_or_config[1] == nil then
     -- This is a raw task params table
@@ -672,7 +670,7 @@ end
 M.soft_delete_buf = function(bufnr)
   if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
     if M.is_bufnr_visible(bufnr) then
-      vim.api.nvim_buf_set_option(bufnr, "bufhidden", "wipe")
+      vim.bo[bufnr].bufhidden = "wipe"
     else
       vim.api.nvim_buf_delete(bufnr, { force = true })
     end

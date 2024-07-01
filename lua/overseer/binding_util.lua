@@ -3,6 +3,8 @@ local layout = require("overseer.layout")
 local util = require("overseer.util")
 local M = {}
 
+---@diagnostic disable: undefined-field
+
 M.create_plug_bindings = function(bufnr, plug_bindings, ...)
   local args = vim.F.pack_len(...)
   for _, binding in ipairs(plug_bindings) do
@@ -18,7 +20,7 @@ end
 
 ---@param bufnr number
 ---@param mode string
----@param bindings table<string, string>
+---@param bindings table<string, string|false>
 ---@param prefix string
 M.create_bindings_to_plug = function(bufnr, mode, bindings, prefix)
   local maps
@@ -35,6 +37,7 @@ M.create_bindings_to_plug = function(bufnr, mode, bindings, prefix)
         -- HACK for some reason I can't get plug mappings to work in insert mode
         for _, map in ipairs(maps) do
           if map.lhs == rhs then
+            ---@diagnostic disable-next-line: cast-local-type
             rhs = map.callback or map.rhs
             break
           end
@@ -107,8 +110,8 @@ M.show_bindings = function(prefix)
   end
   vim.keymap.set("n", "q", "<cmd>close<CR>", { buffer = bufnr })
   vim.keymap.set("n", "<c-c>", "<cmd>close<CR>", { buffer = bufnr })
-  vim.api.nvim_buf_set_option(bufnr, "modifiable", false)
-  vim.api.nvim_buf_set_option(bufnr, "bufhidden", "wipe")
+  vim.bo[bufnr].modifiable = false
+  vim.bo[bufnr].bufhidden = "wipe"
 
   local width = layout.calculate_width(max_line + 1, { min_width = 20 })
   local height = layout.calculate_height(#lines, { min_height = 10 })
@@ -123,7 +126,7 @@ M.show_bindings = function(prefix)
     zindex = config.help_win.zindex,
   })
   for opt, value in pairs(config.help_win.win_opts or {}) do
-    vim.api.nvim_win_set_option(win, opt, value)
+    vim.wo[win][opt] = value
   end
 end
 

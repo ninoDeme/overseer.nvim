@@ -14,7 +14,9 @@
 - [on_output_write_file](#on_output_write_file)
 - [on_result_diagnostics](#on_result_diagnostics)
 - [on_result_diagnostics_quickfix](#on_result_diagnostics_quickfix)
+- [on_result_diagnostics_trouble](#on_result_diagnostics_trouble)
 - [on_result_notify](#on_result_notify)
+- [open_output](#open_output)
 - [restart_on_save](#restart_on_save)
 - [run_after](#run_after)
 - [timeout](#timeout)
@@ -51,10 +53,11 @@ Display the run duration
 
 After task is completed, dispose it after a timeout
 
-| Param    | Type         | Default                              | Desc                                              |
-| -------- | ------------ | ------------------------------------ | ------------------------------------------------- |
-| statuses | `list[enum]` | `["SUCCESS", "FAILURE", "CANCELED"]` | Tasks with one of these statuses will be disposed |
-| timeout  | `number`     | `300`                                | Time to wait (in seconds) before disposing        |
+| Param        | Type         | Default                              | Desc                                                                  |
+| ------------ | ------------ | ------------------------------------ | --------------------------------------------------------------------- |
+| require_view | `list[enum]` | `[]`                                 | Tasks with these statuses must be viewed before they will be disposed |
+| statuses     | `list[enum]` | `["SUCCESS", "FAILURE", "CANCELED"]` | Tasks with one of these statuses will be disposed                     |
+| timeout      | `number`     | `300`                                | Time to wait (in seconds) before disposing                            |
 
 ## on_complete_notify
 
@@ -173,6 +176,17 @@ If task result contains diagnostics, add them to the quickfix
 | set_empty_results | `boolean` | `false` | If true, overwrite the current quickfix even if there are no diagnostics |
 | use_loclist       | `boolean` | `false` | If true, use the loclist instead of quickfix                             |
 
+## on_result_diagnostics_trouble
+
+[on_result_diagnostics_trouble.lua](../lua/overseer/component/on_result_diagnostics_trouble.lua)
+
+If task result contains diagnostics, open trouble.nvim
+
+| Param | Type           | Default | Desc                                                 |
+| ----- | -------------- | ------- | ---------------------------------------------------- |
+| args  | `list[string]` |         | Arguments passed to 'Trouble diagnostics open'       |
+| close | `boolean`      | `false` | If true, close Trouble when there are no diagnostics |
+
 ## on_result_notify
 
 [on_result_notify.lua](../lua/overseer/component/on_result_notify.lua)
@@ -189,6 +203,23 @@ Normally you will want to use on_complete_notify. If you have a long-running wat
 | system                        | `enum`    | `"never"` | When to send a system notification (`"always"\|"never"\|"unfocused"`)         |
 
 - **on_change:** This only works when infer_status_from_diagnostics = true
+
+## open_output
+
+[open_output.lua](../lua/overseer/component/open_output.lua)
+
+Open task output
+
+| Param       | Type      | Default                      | Desc                                                                                    |
+| ----------- | --------- | ---------------------------- | --------------------------------------------------------------------------------------- |
+| direction   | `enum`    | `"dock"`                     | Where to open the task output (`"dock"\|"float"\|"tab"\|"vertical"\|"horizontal"`)      |
+| focus       | `boolean` | `false`                      | Focus the output window when it is opened                                               |
+| on_complete | `enum`    | `"never"`                    | Open the output when the task completes (`"always"\|"never"\|"success"\|"failure"`)     |
+| on_result   | `enum`    | `"never"`                    | Open the output when the task produces a result (`"always"\|"never"\|"if_diagnostics"`) |
+| on_start    | `enum`    | `"if_no_on_output_quickfix"` | Open the output when the task starts (`"always"\|"never"\|"if_no_on_output_quickfix"`)  |
+
+- **direction:** The 'dock' option will open the output docked to the bottom next to the task list.
+- **on_start:** The 'if_no_on_output_quickfix' option will open the task output on start unless the task has the 'on_output_quickfix' component attached.
 
 ## restart_on_save
 

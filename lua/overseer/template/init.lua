@@ -5,6 +5,7 @@ local form = require("overseer.form")
 local form_utils = require("overseer.form.utils")
 local log = require("overseer.log")
 local util = require("overseer.util")
+---@diagnostic disable-next-line: deprecated
 local islist = vim.islist or vim.tbl_islist
 local M = {}
 
@@ -22,7 +23,7 @@ local M = {}
 ---@field aliases? string[]
 ---@field desc? string
 ---@field tags? string[]
----@field params? overseer.Params
+---@field params? overseer.Params|fun(): overseer.Params
 ---@field priority? number
 ---@field condition? overseer.SearchCondition
 ---@field builder fun(params: table): overseer.TaskDefinition
@@ -195,11 +196,13 @@ local function validate_template_definition(defn)
     name = { defn.name, "s" },
     desc = { defn.desc, "s", true },
     tags = { defn.tags, "t", true },
-    params = { defn.params, "t" },
     priority = { defn.priority, "n" },
     builder = { defn.builder, "f" },
   })
-  form_utils.validate_params(defn.params)
+  local params = defn.params
+  if type(params) == "table" then
+    form_utils.validate_params(params)
+  end
 end
 
 ---@class overseer.TaskUtil
@@ -355,7 +358,12 @@ M.build_task_args = function(tmpl, opts, callback)
     params = { opts.params, "t" },
   })
   opts.prompt = opts.prompt or config.default_template_prompt
-  local show_prompt, err = M._should_prompt(opts.prompt, tmpl.params, opts.params)
+  local param_schema = tmpl.params or {}
+  if type(param_schema) == "function" then
+    param_schema = param_schema()
+    form_utils.validate_params(param_schema)
+  end
+  local show_prompt, err = M._should_prompt(opts.prompt, param_schema, opts.params)
   if err then
     return callback(nil, err)
   end
@@ -365,7 +373,7 @@ M.build_task_args = function(tmpl, opts, callback)
   end
 
   local schema = {}
-  for k, v in pairs(tmpl.params) do
+  for k, v in pairs(param_schema) do
     schema[k] = v
   end
   form.open(tmpl.name, schema, opts.params, function(final_params)

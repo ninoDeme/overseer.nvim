@@ -25,7 +25,7 @@ local default_config = {
     -- String that separates tasks
     separator = "────────────────────────────────────────",
     -- Default direction. Can be "left", "right", or "bottom"
-    direction = "left",
+    direction = "bottom",
     -- Set keymap to false to remove default behavior
     -- You can add custom keymaps here as well (anything vim.keymap.set accepts)
     bindings = {
@@ -69,7 +69,7 @@ local default_config = {
     height = nil,
     -- Set any window options here (e.g. winhighlight)
     win_opts = {
-      winblend = 10,
+      winblend = 0,
     },
   },
   task_launcher = {
@@ -123,7 +123,7 @@ local default_config = {
     height = nil,
     -- Set any window options here (e.g. winhighlight)
     win_opts = {
-      winblend = 10,
+      winblend = 0,
     },
   },
   -- Configuration for task floating windows
@@ -133,7 +133,7 @@ local default_config = {
     border = "rounded",
     -- Set any window options here (e.g. winhighlight)
     win_opts = {
-      winblend = 10,
+      winblend = 0,
     },
   },
   -- Configuration for mapping help floating windows
@@ -149,13 +149,12 @@ local default_config = {
       "on_output_summarize",
       "on_exit_set_status",
       "on_complete_notify",
-      "on_complete_dispose",
+      { "on_complete_dispose", require_view = { "SUCCESS", "FAILURE" } },
     },
     -- Tasks from tasks.json use these components
     default_vscode = {
       "default",
       "on_result_diagnostics",
-      "on_result_diagnostics_quickfix",
     },
   },
   bundles = {

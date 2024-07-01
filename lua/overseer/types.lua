@@ -1,34 +1,37 @@
----@class overseer.Config
----@field strategy? string
----@field templates? string[]
+---@class (exact) overseer.Config
+---@field strategy? string Default task strategy
+---@field templates? string[] Template modules to load
 ---@field auto_detect_success_color? boolean
----@field dap? boolean
----@field task_list? overseer.ConfigTaskList
----@field actions? any TODO
----@field form? overseer.ConfigFloatWin
+---@field dap? boolean Patch nvim-dap to support preLaunchTask and postDebugTask
+---@field task_list? overseer.ConfigTaskList Configure the task list
+---@field actions? any See :help overseer-actions
+---@field form? overseer.ConfigFloatWin Configure the floating window used for task templates that require input and the floating window used for editing tasks
 ---@field task_launcher? table
 ---@field task_editor? table
 ---@field confirm? overseer.ConfigFloatWin
 ---@field task_win? overseer.ConfigTaskWin
----@field component_aliases? table<string, overseer.Serialized[]>
----@field pre_task_hook? fun(task_defn: overseer.TaskDefinition, util: overseer.TaskUtil)
----@field preload_components? string[]
----@field default_template_prompt "always"|"missing"|"allow"|"never"
----@field log table[]
+---@field help_win? overseer.ConfigFloatWin
+---@field component_aliases? table<string, overseer.Serialized[]> Aliases for bundles of components. Redefine the builtins, or create your own.
+---@field bundles? overseer.ConfigBundles
+---@field preload_components? string[] A list of components to preload on setup. Only matters if you want them to show up in the task editor.
+---@field default_template_prompt? "always"|"missing"|"allow"|"avoid"|"never" Controls when the parameter prompt is shown when running a template
+---@field template_timeout? integer For template providers, how long to wait (in ms) before timing out. Set to 0 to disable timeouts.
+---@field template_cache_threshold? integer Cache template provider results if the provider takes longer than this to run. Time is in ms. Set to 0 to disable caching.
+---@field log? table[]
 
----@class overseer.ConfigTaskList
----@field default_detail? 1|2|3
----@field max_width? number|number[]
----@field min_width? number|number[]
----@field width? number
+---@class (exact) overseer.ConfigTaskList
+---@field default_detail? 1|2|3 Default detail level for tasks. Can be 1-3.
+---@field max_width? number|number[] Width dimensions can be integers or a float between 0 and 1 (e.g. 0.4 for 40%). min_width and max_width can be a single value or a list of mixed integer/float types. max_width = {100, 0.2} means "the lesser of 100 columns or 20% of total"
+---@field min_width? number|number[] min_width = {40, 0.1} means "the greater of 40 columns or 10% of total"
+---@field width? number optionally define an integer/float for the exact width of the task list
 ---@field max_height? number|number[]
 ---@field min_height? number|number[]
 ---@field height? number
----@field separator? string
----@field direction? string
----@field bindings? table<string, string>
+---@field separator? string String that separates tasks
+---@field direction? string Default direction. Can be "left", "right", or "bottom"
+---@field bindings? table<string, string|false> Set keymap to false to remove default behavior
 
----@class overseer.ConfigFloatWin
+---@class (exact) overseer.ConfigFloatWin
 ---@field border? string|table
 ---@field zindex? integer
 ---@field min_width? number|number[]
@@ -37,9 +40,13 @@
 ---@field max_height? number|number[]
 ---@field win_opts? table<string, any>
 
----@class overseer.ConfigTaskWin
+---@class (exact) overseer.ConfigTaskWin
 ---@field border? string|table
 ---@field padding? integer
 ---@field win_opts? table<string, any>
 
----@alias overseer.Serialized string|table
+---@class (exact) overseer.ConfigBundles
+---@field save_task_opts? table When saving a bundle with OverseerSaveBundle or save_task_bundle(), filter the tasks with these options (passed to list_tasks())
+---@field autostart_on_load? boolean Autostart tasks when they are loaded from a bundle
+
+---@alias overseer.Serialized string|{[1]: string, [string]: any}
