@@ -37,10 +37,13 @@ function ToggleTermStrategy.new(opts)
     hidden = false,
     on_create = nil,
   })
-  return setmetatable({
+  ---@type overseer.ToggleTermStrategy
+  local strategy = {
     opts = opts,
     term = nil,
-  }, { __index = ToggleTermStrategy })
+  }
+  setmetatable(strategy, { __index = ToggleTermStrategy })
+  return strategy
 end
 
 function ToggleTermStrategy:reset()
@@ -96,7 +99,7 @@ function ToggleTermStrategy:start(task)
 
       if self.opts.use_shell then
         t:send(cmd)
-        t:send("exit $?")
+        t:send("exit " .. (vim.o.shell:find("fish") and "$status" or "$?"))
       end
     end,
     on_stdout = function(t, job_id, d)
