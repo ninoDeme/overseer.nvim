@@ -75,7 +75,7 @@ function Sidebar:init()
       return true
     end,
   })
-  vim.api.nvim_create_autocmd("CursorMoved", {
+  vim.api.nvim_create_autocmd({"CursorMoved", "BufEnter"}, {
     desc = "[Overseer] Update preview window when cursor moves",
     buffer = self.bufnr,
     nested = true,
