@@ -88,7 +88,9 @@ function Sidebar:init()
     pattern = "OverseerListUpdate",
     desc = "[Overseer] Update task list when tasks change",
     callback = function()
-      self:render()
+      vim.schedule(function ()
+        self:render(task_list.list_tasks())
+      end)
     end,
   })
 
