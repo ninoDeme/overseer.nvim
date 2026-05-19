@@ -78,6 +78,19 @@ local function load_template(name)
   end
 end
 
+---@param module_name string
+---@return boolean
+local function is_disabled_module(module_name)
+  for _, module in ipairs(config.disable_template_modules) do
+    if vim.startswith(module, "^") and module_name:match(module) then
+      return true
+    elseif module_name == module then
+      return true
+    end
+  end
+  return false
+end
+
 local _combined_providers
 local last_rtp
 ---@return overseer.TemplateProvider[]
@@ -93,23 +106,26 @@ local function get_providers()
     local path = vim.fs.joinpath("lua", dir, "**", "*.lua")
     local task_files = vim.api.nvim_get_runtime_file(path, true)
     for _, abspath in ipairs(task_files) do
-      local module_name = abspath:match("^.*(overseer/template/.*)%.lua$"):gsub("/", ".")
-      local tmpl = load_template(module_name)
-      if tmpl then
-        if tmpl.generator then
-          table.insert(file_providers, tmpl)
-        else
-          local provider = {
-            name = tmpl.module,
-            module = tmpl.module,
-            condition = tmpl.condition,
-            generator = function()
-              return { tmpl }
-            end,
-          }
-          ---@cast provider overseer.TemplateProvider
-          validate_template_provider(provider)
-          table.insert(file_providers, provider)
+      local module_name =
+        vim.fs.normalize(abspath):match("^.*(overseer/template/.*)%.lua$"):gsub("/", ".")
+      if not is_disabled_module(module_name) then
+        local tmpl = load_template(module_name)
+        if tmpl then
+          if tmpl.generator then
+            table.insert(file_providers, tmpl)
+          else
+            local provider = {
+              name = tmpl.module,
+              module = tmpl.module,
+              condition = tmpl.condition,
+              generator = function()
+                return { tmpl }
+              end,
+            }
+            ---@cast provider overseer.TemplateProvider
+            validate_template_provider(provider)
+            table.insert(file_providers, provider)
+          end
         end
       end
     end
@@ -466,8 +482,12 @@ M.list = function(opts, cb)
   vim.validate("tags", opts.tags, "table", true)
   vim.validate("dir", opts.dir, "string")
   vim.validate("filetype", opts.filetype, "string", true)
-  -- Make sure the search dir is an absolute path
-  opts.dir = vim.fn.fnamemodify(opts.dir, ":p")
+  -- Make sure the search dir is an absolute path.
+  -- Trim the trailing slash from the search directory.
+  -- There is a bad interaction with vim.fs.find({upward = true})
+  -- where the first found file will be duplicated if it is in the same directory as `dir` and if
+  -- `dir` ends with a trailing slash.
+  opts.dir = vim.fn.fnamemodify(opts.dir, ":p"):gsub("[/\\]$", "")
 
   if not clear_cache_autocmd then
     clear_cache_autocmd = vim.api.nvim_create_autocmd("BufWritePost", {

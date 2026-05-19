@@ -112,7 +112,12 @@ vim.api.nvim_create_user_command("Make", function(params)
   local task = require("overseer").new_task({
     cmd = vim.fn.expandcmd(cmd),
     components = {
-      { "on_output_quickfix", open = not params.bang, open_height = 8 },
+      {
+        "on_output_quickfix",
+        open = not params.bang,
+        open_height = 8,
+        errorformat = vim.o.errorformat,
+      },
       "default",
     },
   })
@@ -165,7 +170,7 @@ overseer.create_task_output_view(0, {
     filter = function(task)
       return task.time_start ~= nil
     end,
-  }
+  },
   select = function(self, tasks, task_under_cursor)
     table.sort(tasks, function(a, b)
       return a.time_start > b.time_start

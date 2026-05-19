@@ -175,11 +175,15 @@ M.render_buf_chunks = function(bufnr, ns, lines)
     table.insert(new_lines, line_text)
   end
   vim.bo[bufnr].modifiable = true
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, new_lines)
+  local success, err = pcall(vim.api.nvim_buf_set_lines, bufnr, 0, -1, false, new_lines)
   vim.bo[bufnr].modifiable = false
   vim.bo[bufnr].modified = false
-  for _, extmark in ipairs(extmarks) do
-    vim.api.nvim_buf_set_extmark(bufnr, ns, extmark[1], extmark[2], extmark[3])
+  if success then
+    for _, extmark in ipairs(extmarks) do
+      vim.api.nvim_buf_set_extmark(bufnr, ns, extmark[1], extmark[2], extmark[3])
+    end
+  else
+    log.warn("Error updating buffer %d: %s", bufnr, err)
   end
 end
 
@@ -684,13 +688,16 @@ M.status_to_log_level = function(status)
 end
 
 ---Delete buffer. If buffer is visible, set bufhidden=wipe instead
----@param bufnr integer
+---@param bufnr? integer
 M.soft_delete_buf = function(bufnr)
   if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
     if M.is_bufnr_visible(bufnr) then
       vim.bo[bufnr].bufhidden = "wipe"
     else
-      vim.api.nvim_buf_delete(bufnr, { force = true })
+      local ok = pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
+      if not ok then
+        vim.bo[bufnr].bufhidden = "wipe"
+      end
     end
   end
 end

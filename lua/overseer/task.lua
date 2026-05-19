@@ -65,7 +65,7 @@ function Task.new(opts)
   opts = opts or {}
   log.trace("New task: %s", opts)
   -- cmd can be table or string
-  vim.validate("cmd", opts.name, function(v)
+  vim.validate("cmd", opts.cmd, function(v)
     return type(v) == "string" or type(v) == "table"
   end, true)
   vim.validate("args", opts.args, "table", true)
@@ -147,6 +147,9 @@ function Task.new(opts)
   local bufnr = task:get_bufnr()
   if bufnr then
     vim.b[bufnr].overseer_task = task.id
+    vim.api.nvim_buf_call(bufnr, function()
+      vim.bo[bufnr].filetype = "OverseerOutput"
+    end)
   end
   task:subscribe("on_status", task_list.on_task_updated)
   return task
@@ -340,7 +343,7 @@ function Task:is_disposed()
 end
 
 ---Get the buffer containing the task output. Will be nil if task is PENDING.
----@return number|nil
+---@return integer|nil
 function Task:get_bufnr()
   local bufnr = self.strategy:get_bufnr()
   if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
@@ -559,13 +562,7 @@ function Task:dispose(force)
   self.strategy:dispose()
   self:dispatch("on_dispose")
   task_list.remove(self)
-  if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
-    if bufnr_visible then
-      vim.bo[bufnr].bufhidden = "wipe"
-    else
-      vim.api.nvim_buf_delete(bufnr, { force = true })
-    end
-  end
+  util.soft_delete_buf(bufnr)
   return true
 end
 
@@ -640,6 +637,9 @@ function Task:start()
   if bufnr then
     vim.bo[bufnr].buflisted = false
     vim.b[bufnr].overseer_task = self.id
+    vim.api.nvim_buf_call(bufnr, function()
+      vim.bo[bufnr].filetype = "OverseerOutput"
+    end)
   end
 
   util.replace_buffer_in_wins(self.prev_bufnr, bufnr)

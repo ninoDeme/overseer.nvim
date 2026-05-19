@@ -133,6 +133,7 @@ Set all task output into the quickfix (on complete)
 | ------------------ | --------- | --------- | --------------------------------------------------------------------------------------- |
 | close              | `boolean` | `false`   | Close the quickfix on completion if no errorformat matches                              |
 | errorformat        | `string`  |           | See :help errorformat                                                                   |
+| focus              | `boolean` | `false`   | Focus the quickfix window when opened                                                   |
 | items_only         | `boolean` | `false`   | Only show lines that match the errorformat                                              |
 | open               | `boolean` | `false`   | Open the quickfix on output                                                             |
 | open_height        | `integer` |           | The height of the quickfix when opened                                                  |
@@ -273,6 +274,7 @@ Ensure that this task does not have any duplicates
 
 | Param              | Type      | Default | Desc                                                                                                        |
 | ------------------ | --------- | ------- | ----------------------------------------------------------------------------------------------------------- |
+| compare            | `opaque`  |         | Comparison function that returns true when a task is equal                                                  |
 | replace            | `boolean` | `true`  | If a prior task exists, replace it. When false, will restart the existing task and dispose the current task |
 | restart_interrupts | `boolean` | `true`  | When replace = false, should restarting the existing task interrupt it                                      |
 | soft               | `boolean` | `false` | Only dispose duplicate tasks if they are completed. Implies replace = true.                                 |

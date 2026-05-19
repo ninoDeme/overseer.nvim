@@ -35,22 +35,9 @@ local function get_candidate_package_files(opts)
   })
 end
 
----@param opts overseer.SearchParams
+---@param package_dir string
 ---@return string|nil
-local function get_package_file(opts)
-  local candidate_packages = get_candidate_package_files(opts)
-  -- go through candidate package files from closest to the file to least close
-  for _, package in ipairs(candidate_packages) do
-    local data = files.load_json_file(package)
-    if data.scripts or data.workspaces then
-      return package
-    end
-  end
-  return nil
-end
-
-local function pick_package_manager(package_file)
-  local package_dir = vim.fs.dirname(package_file)
+local function detect_package_manager(package_dir)
   for mgr, lockfiles in pairs(mgr_lockfiles) do
     for _, lockfile in ipairs(lockfiles) do
       if vim.uv.fs_stat(vim.fs.joinpath(package_dir, lockfile)) then
@@ -58,17 +45,45 @@ local function pick_package_manager(package_file)
       end
     end
   end
-  return "npm"
+  return nil
+end
+
+---@param candidate_packages string[]
+---@return { package: string, manager: string }|nil
+---Determine the package.json file with scripts/workspaces and its package manager.
+---Prioritizes packages with lockfiles, falls back to "npm" and closest package.json if no lockfile is found.
+local function get_package_and_manager(candidate_packages)
+  for _, package_file in ipairs(candidate_packages) do
+    local data = files.load_json_file(package_file)
+    if data.scripts or data.workspaces then
+      local package_dir = vim.fs.dirname(package_file)
+      local manager = detect_package_manager(package_dir)
+      if manager then
+        return { package = package_file, manager = manager }
+      end
+    end
+  end
+
+  for _, package_file in ipairs(candidate_packages) do
+    local data = files.load_json_file(package_file)
+    if data.scripts or data.workspaces then
+      return { package = package_file, manager = "npm" }
+    end
+  end
+
+  return nil
 end
 
 ---@type overseer.TemplateFileProvider
 return {
   generator = function(opts)
-    local package = get_package_file(opts)
-    if not package then
+    local candidate_packages = get_candidate_package_files(opts)
+    local result = get_package_and_manager(candidate_packages)
+    if not result then
       return "No package.json file found"
     end
-    local bin = pick_package_manager(package)
+    local package = result.package
+    local bin = result.manager
     if vim.fn.executable(bin) == 0 then
       return string.format("Could not find command '%s'", bin)
     end
@@ -79,7 +94,7 @@ return {
     if data.scripts then
       for k in pairs(data.scripts) do
         table.insert(ret, {
-          name = string.format("%s %s", bin, k),
+          name = string.format("%s %s (%s)", bin, k, data.name),
           builder = function()
             return {
               cmd = { bin, "run", k },
@@ -111,6 +126,16 @@ return {
         end
       end
     end
+
+    table.insert(ret, {
+      name = bin .. " install",
+      builder = function()
+        return {
+          cmd = { bin, "install" },
+          cwd = cwd,
+        }
+      end,
+    })
     return ret
   end,
 }
